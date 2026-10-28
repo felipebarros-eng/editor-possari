@@ -111,7 +111,8 @@ o que chega dela continua sendo conferido.
    script corrige, ele para e diz qual: ajuste a correção antes de publicar.
 3. Rode o teste automático (fica com a equipe, fora deste repositório: `editor_site_testes/teste.js`), que abre uma
    peça de exemplo, edita, salva `.docx`/`.pdf` e confere a segurança.
-4. Publique (commit + push). Nenhum arquivo pode passar de 95 MB (o maior hoje é o `x2t.wasm`, com 40 MB).
+4. Publique: commit e push nos ramos `main` e `gh-pages` (`git push origin main main:gh-pages`). O GitHub Pages
+   publica o ramo `gh-pages`, pasta raiz. Nenhum arquivo pode passar de 95 MB (o maior hoje é o `x2t.wasm`, com 40 MB).
 
 ## Tamanho
 

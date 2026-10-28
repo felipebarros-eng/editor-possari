@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<!-- Nada sai daqui para a internet: so scripts, estilos e paginas do proprio site. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<title>Editor Possari</title>
+<!--
+  Ponte entre a Biblioteca (Apps Script) e o editor de documentos (OnlyOffice rodando no navegador).
+  Codigo do editor: ONLYOFFICE (AGPL-3.0), ver LICENSE.txt e README.md deste site.
+-->
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#fff}iframe{border:0;width:100%;height:100%;display:block}</style>
+</head>
+<body>
+<iframe id="oo" src="onlyoffice.html" title="Editor de documentos" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+<script src="possari.js"></script>
+</body>
+</html>

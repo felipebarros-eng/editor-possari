@@ -1,0 +1,15 @@
+Excecao de fontes da GPL (Font Exception), usada pelas fontes GPL listadas em ../LICENCAS.md
+(FreeFont, Tibetan Machine Uni, WenQuanYi Zen Hei, Liberation Sans Narrow 1.x, Pothana2000, Vemana2000, Samyak...).
+Texto padrao da Free Software Foundation:
+
+As a special exception, if you create a document which uses this font, and
+embed this font or unaltered portions of this font into the document, this
+font does not by itself cause the resulting document to be covered by the
+GNU General Public License. This exception does not however invalidate any
+other reasons why the document might be covered by the GNU General Public
+License. If you modify this font, you may extend this exception to your
+version of the font, but you are not obligated to do so. If you do not
+wish to do so, delete this exception statement from your version.
+
+Em portugues (resumo, sem valor legal): um documento que usa ou embute estas fontes (por exemplo, o PDF de uma
+peca) NAO passa a ser coberto pela GPL por causa delas.

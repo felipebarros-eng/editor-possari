@@ -3,8 +3,10 @@
 // O documento nunca sai do navegador: so trafega por postMessage, sempre com a origem conferida.
 //
 // Protocolo (versao 1)
-//   ponte -> pai: ponte-pronta {versao} | documento-pronto | alterado {alterado} | salvo {requestId, ok, formato, buffer?, erro?} | erro {erro}
+//   ponte -> pai: ponte-pronta {versao} | documento-pronto | alterado {alterado} | salvo {requestId, ok, formato, buffer?, erro?}
+//                 | pedido-salvar (Ctrl+S, disquete ou Arquivo > Salvar do editor) | erro {erro}
 //   pai -> ponte: abrir {nome, bytes, usuario:{id,nome}} | salvar {requestId, formato:'docx'|'pdf'} | estilo {nome}
+// Endereco: possari.html#origem=<origem do pai, codificada> (para navegadores sem location.ancestorOrigins).
 (function () {
   'use strict';
 
@@ -13,6 +15,7 @@
   var ORIGENS_DO_PAI = [/^https:\/\/[a-z0-9-]+-script\.googleusercontent\.com$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
   var MIME_DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   var TEMPO_MAXIMO_SALVAR_MS = 120000;
+  var INTERVALO_PEDIDO_SALVAR_MS = 1000;   // Ctrl+S segurado (repeticao da tecla) vira um pedido so
 
   var oo = document.getElementById('oo');
   var origemPai = descobrirOrigemPai();
@@ -24,22 +27,36 @@
   var fila = [];                 // pedidos de salvar, atendidos um de cada vez
   var emAndamento = null;
   var seq = 0;
+  var ultimoPedidoSalvar = 0;
 
   function origemPermitida(origem) {
     return typeof origem === 'string' && ORIGENS_DO_PAI.some(function (re) { return re.test(origem); });
   }
 
   // Origem da pagina que nos colocou no iframe. Sem ela nao falamos com ninguem (nunca '*').
+  // Ordem: location.ancestorOrigins (dado pelo proprio navegador; quando existe, vale sozinho), o #origem=... que a
+  // Biblioteca poe no endereco (Firefox nao tem ancestorOrigins) e document.referrer (o HtmlService pode nao mandar).
+  // Tudo passa pela mesma lista de origens permitidas. Mesmo que alguem minta no #origem, o navegador so entrega o
+  // que mandamos se a janela de cima for mesmo dessa origem, e o que chega dela continua conferido (e.source/e.origin).
   function descobrirOrigemPai() {
     if (window.parent === window) return null;
-    var origem = null;
-    try {
-      if (location.ancestorOrigins && location.ancestorOrigins.length) origem = location.ancestorOrigins[0];
-    } catch (e) {}
-    if (!origem && document.referrer) {
-      try { origem = new URL(document.referrer).origin; } catch (e) {}
+    var ancestrais = null;
+    try { ancestrais = location.ancestorOrigins; } catch (e) {}
+    if (ancestrais && ancestrais.length && ancestrais[0] && ancestrais[0] !== 'null') {
+      return origemPermitida(ancestrais[0]) ? ancestrais[0] : null;
     }
-    return origemPermitida(origem) ? origem : null;
+    var doHash = origemDoHash();
+    if (origemPermitida(doHash)) return doHash;
+    var doReferrer = null;
+    if (document.referrer) {
+      try { doReferrer = new URL(document.referrer).origin; } catch (e) {}
+    }
+    return origemPermitida(doReferrer) ? doReferrer : null;
+  }
+
+  // possari.html#origem=https%3A%2F%2Fn-...-script.googleusercontent.com
+  function origemDoHash() {
+    try { return new URLSearchParams(String(location.hash || '').replace(/^#/, '')).get('origem'); } catch (e) { return null; }
   }
 
   function paraPai(msg, transferir) {
@@ -108,6 +125,39 @@
       if (w) w.focus();
       if (api && typeof api.asc_enableKeyEvents === 'function') api.asc_enableKeyEvents(true);
     } catch (e) {}
+  }
+
+  // Ctrl+S, o disquete e Arquivo > Salvar do editor chamam api.asc_Save. Neste site quem grava e a Biblioteca (no Drive):
+  // o editor nao pode gerar o arquivo por conta propria e se marcar como "sem alteracoes" (o texto ficaria so aqui).
+  // A ponte troca asc_Save por um aviso ao pai ('pedido-salvar'); o editor continua modificado ate um 'salvar' docx
+  // dar certo (marcarComoSalvo). Os salvamentos automaticos do editor (asc_Save(true)) tambem nao fazem nada.
+  function protegerSalvarDoEditor() {
+    var api = apiEditor();
+    if (!api || typeof api.asc_Save !== 'function') return false;
+    if (api.asc_Save.possari) return true;
+    var substituto = function (automatico) {
+      if (!automatico) pedidoSalvarDoEditor();
+      return false;
+    };
+    substituto.possari = true;
+    api.asc_Save = substituto;
+    return true;
+  }
+
+  function protegerSalvarQuandoPuder() {
+    var tentativas = 0;
+    (function tentar() {
+      if (protegerSalvarDoEditor() || ++tentativas > 50) return;
+      setTimeout(tentar, 200);
+    })();
+  }
+
+  function pedidoSalvarDoEditor() {
+    if (!documentoAberto) return;
+    var agora = Date.now();
+    if (agora - ultimoPedidoSalvar < INTERVALO_PEDIDO_SALVAR_MS) return;
+    ultimoPedidoSalvar = agora;
+    paraPai({ type: 'pedido-salvar' });
   }
 
   // ---------------------------------------------------------------- pedidos do pai
@@ -231,6 +281,7 @@
         break;
       case 'onlyoffice-document-ready':
         documentoAberto = true;
+        protegerSalvarQuandoPuder();
         if (urlDocumento) { URL.revokeObjectURL(urlDocumento); urlDocumento = null; }
         paraPai({ type: 'documento-pronto' });
         informarAlterado(false);
@@ -259,5 +310,8 @@
     else if (d.type === 'estilo') aplicarEstilo(d);
   });
 
+  // O editor so comeca a carregar depois que a ponte ja ouve as mensagens dele: se possari.js chegasse depois do
+  // onlyoffice.html (rede lenta so neste arquivo), o aviso 'onlyoffice-ready' se perderia e o documento nao abriria.
+  oo.src = 'onlyoffice.html';
   paraPai({ type: 'ponte-pronta', versao: VERSAO });
 })();

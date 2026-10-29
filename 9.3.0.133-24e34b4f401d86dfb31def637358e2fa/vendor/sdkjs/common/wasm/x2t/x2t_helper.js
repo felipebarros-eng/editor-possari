@@ -791,9 +791,34 @@
         });
     }
 
+    // Possari: arquivos que AscCommon.fetchFonts (sdk-all-min.js) gravaria em /working/fonts e que ainda nao estao
+    // la. Mesma regra dele: fontes com NeedStyles e, de cada uma, os estilos com arquivo (indexR/B/BI/I != -1),
+    // gravados como Nome + sufixo + '.ttf'. null = nao deu para saber (editor diferente): busca tudo, como antes.
+    function fontesQueFaltam(fs) {
+        var sufixos = { indexR: '', indexB: '_Bold', indexBI: '_Bold_Italic', indexI: '_Italic' }, faltam = [];
+        try {
+            window.AscFonts.g_font_infos.forEach(function (info) {
+                if (!info.NeedStyles) return;
+                Object.keys(sufixos).forEach(function (k) {
+                    var nome = info.Name + sufixos[k] + '.ttf';
+                    if (typeof info[k] === 'number' && info[k] !== -1 && !fs.analyzePath('/working/fonts/' + nome).exists) {
+                        faltam.push(nome);
+                    }
+                });
+            });
+        } catch (e) {
+            return null;
+        }
+        return faltam;
+    }
+
     X2TConverter.prototype.fetchFonts = async function () {
         let that = this;
         await esperarCatalogoDeFontes();
+        // Possari: as fontes gravadas numa conversao continuam em /working/fonts nas seguintes (o x2t so e recriado
+        // com o editor). Antes o build baixava e regravava todas a cada conversao; agora so se faltar alguma.
+        var faltam = that.x2tModule ? fontesQueFaltam(that.x2tModule.FS) : null;
+        if (faltam && faltam.length === 0) return;
         return new Promise(function (resolve, reject) {
             window["AscCommon"]['fetchFonts'](function (data) {
                 try {
@@ -963,7 +988,8 @@
             return new Promise(async function (resolve, reject) {
                 try {
                     await self.writeMediaFiles(medias);
-                    await self.fetchFonts();
+                    // Possari: o .docx nao usa fontes (so a saida em PDF passa <m_sFontDir> ao x2t): nao busca.
+                    if (targetExt.toLowerCase() !== '.docx') await self.fetchFonts();
                     var sanitizedName = self.sanitizeFileName(fileName);
                     var workspace = `/working/`;
                     var inputPath = workspace + sanitizedName + fileExt;

@@ -6,6 +6,9 @@
 //   ponte -> pai: ponte-pronta {versao} | documento-pronto | alterado {alterado} | salvo {requestId, ok, formato, buffer?, erro?}
 //                 | pedido-salvar (Ctrl+S, disquete ou Arquivo > Salvar do editor) | erro {erro}
 //   pai -> ponte: abrir {nome, bytes, usuario:{id,nome}} | salvar {requestId, formato:'docx'|'pdf'} | estilo {nome}
+//   Varios 'salvar' podem chegar sem esperar o 'salvo' (no Gerar PDF a Biblioteca pede o docx e logo o pdf): ficam
+//   numa fila e sao atendidos um de cada vez, na ordem, cada um respondido pelo seu requestId. Gerar o pdf nao mexe no
+//   'alterado' (a Biblioteca v15.2 pede so o pdf quando nada mudou desde o ultimo docx).
 // Endereco: possari.html#origem=<origem do pai, codificada> (para navegadores sem location.ancestorOrigins).
 (function () {
   'use strict';
@@ -16,6 +19,7 @@
   var MIME_DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   var TEMPO_MAXIMO_SALVAR_MS = 120000;
   var INTERVALO_PEDIDO_SALVAR_MS = 1000;   // Ctrl+S segurado (repeticao da tecla) vira um pedido so
+  var ESPERA_PREPARAR_FONTES_MS = 2000;    // depois que o documento abre, para nao disputar com a abertura
 
   var oo = document.getElementById('oo');
   var origemPai = descobrirOrigemPai();
@@ -152,6 +156,26 @@
     })();
   }
 
+  // O conversor do editor (x2t) precisa das fontes do documento para gerar o PDF e as guarda depois da 1a vez
+  // (correcao 8 do montar.py). Com o documento aberto e o navegador ocioso, a ponte ja pede que ele as guarde: o 1o
+  // Gerar PDF nao espera por elas (22 arquivos numa peca comum; passados os 10 min de cache do site, 22 revalidacoes).
+  // Se nao der (editor diferente, outro documento abrindo), nada muda: o PDF busca as fontes como antes.
+  function prepararFontesDoConversor() {
+    setTimeout(function () {
+      var agora = function () {
+        try {
+          var w = janelaEditor();
+          var x2t = w && w.AscCommon && w.AscCommon.x2t;
+          if (!documentoAberto || !x2t || !x2t.x2tModule || typeof x2t.fetchFonts !== 'function') return;
+          var p = x2t.fetchFonts();
+          if (p && typeof p.catch === 'function') p.catch(function () {});
+        } catch (e) {}
+      };
+      if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(agora, { timeout: 3000 });
+      else agora();
+    }, ESPERA_PREPARAR_FONTES_MS);
+  }
+
   function pedidoSalvarDoEditor() {
     if (!documentoAberto) return;
     var agora = Date.now();
@@ -282,6 +306,7 @@
       case 'onlyoffice-document-ready':
         documentoAberto = true;
         protegerSalvarQuandoPuder();
+        prepararFontesDoConversor();
         if (urlDocumento) { URL.revokeObjectURL(urlDocumento); urlDocumento = null; }
         paraPai({ type: 'documento-pronto' });
         informarAlterado(false);

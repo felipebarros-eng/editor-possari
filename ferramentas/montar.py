@@ -13,7 +13,9 @@ O que faz, nesta ordem:
   4. poe uma Content-Security-Policy (meta) em todas as paginas HTML do build, para nada sair para a internet;
   5. corrige uma corrida do build: com o editor no cache, o documento chegava antes do catalogo de fontes;
   6. da mais tempo (10 min, em vez de 60 s) para o x2t.wasm (42 MB) baixar na 1a abertura com internet lenta;
-  7. nomes dos estilos em portugues como no Word (Titulo, Subtitulo, Titulo 1..9, Citacao...) no idioma pt.
+  7. nomes dos estilos em portugues como no Word (Titulo, Subtitulo, Titulo 1..9, Citacao...) no idioma pt;
+  8. o conversor (x2t) guarda as fontes entre uma conversao e outra e nao busca fontes para gerar .docx (antes cada
+     conversao baixava e regravava todas: Gerar PDF pagava isso 2 vezes).
 
 Nao mexe em possari.html, possari.js, README.md, .nojekyll, .gitignore, fontes/licencas/ nem nesta pasta
 ferramentas/ (alem do relatorio_fontes.tsv, que ele mesmo gera).
@@ -380,6 +382,57 @@ def corrigir_mensagens(dest):
            'a.parent&&a.parent.postMessage(ub.data,a.location.origin)')
 
 
+# ---------------------------------------------------------------- fontes do conversor (x2t) guardadas
+# O build chamava AscCommon.fetchFonts (sdk-all-min.js) em TODA conversao: um XHR para cada arquivo das fontes do
+# documento (22 arquivos, 7 MB numa peca comum), e regravava todos em /working/fonts do x2t -- inclusive ao gerar o
+# .docx, que nao usa fontes (so a saida em PDF passa <m_sFontDir> ao x2t). O Gerar PDF da Biblioteca (salva o .docx e
+# exporta o PDF) pagava isso 2 vezes: 0,1 s num PC rapido, 0,25-0,55 s com a CPU 4x mais lenta e, passados os 10 min de
+# cache do GitHub Pages, mais 22 revalidacoes por conversao. Agora as fontes gravadas continuam em /working/fonts (o x2t
+# so e recriado junto com o editor) e so se busca de novo quando falta alguma das que o fetchFonts mandaria (mesma regra
+# dele); o .docx nao busca fontes.
+def guardar_fontes_do_conversor(dest):
+    x2t = os.path.join(dest, V, 'sdkjs/common/wasm/x2t/x2t_helper.js')
+    # depende da correcao da corrida (esperarCatalogoDeFontes), feita antes em corrigir_mensagens
+    trocar(x2t,
+           "    X2TConverter.prototype.fetchFonts = async function () {\n"
+           "        let that = this;\n"
+           "        await esperarCatalogoDeFontes();\n",
+           "    // Possari: arquivos que AscCommon.fetchFonts (sdk-all-min.js) gravaria em /working/fonts e que ainda nao estao\n"
+           "    // la. Mesma regra dele: fontes com NeedStyles e, de cada uma, os estilos com arquivo (indexR/B/BI/I != -1),\n"
+           "    // gravados como Nome + sufixo + '.ttf'. null = nao deu para saber (editor diferente): busca tudo, como antes.\n"
+           "    function fontesQueFaltam(fs) {\n"
+           "        var sufixos = { indexR: '', indexB: '_Bold', indexBI: '_Bold_Italic', indexI: '_Italic' }, faltam = [];\n"
+           "        try {\n"
+           "            window.AscFonts.g_font_infos.forEach(function (info) {\n"
+           "                if (!info.NeedStyles) return;\n"
+           "                Object.keys(sufixos).forEach(function (k) {\n"
+           "                    var nome = info.Name + sufixos[k] + '.ttf';\n"
+           "                    if (typeof info[k] === 'number' && info[k] !== -1 && !fs.analyzePath('/working/fonts/' + nome).exists) {\n"
+           "                        faltam.push(nome);\n"
+           "                    }\n"
+           "                });\n"
+           "            });\n"
+           "        } catch (e) {\n"
+           "            return null;\n"
+           "        }\n"
+           "        return faltam;\n"
+           "    }\n\n"
+           "    X2TConverter.prototype.fetchFonts = async function () {\n"
+           "        let that = this;\n"
+           "        await esperarCatalogoDeFontes();\n"
+           "        // Possari: as fontes gravadas numa conversao continuam em /working/fonts nas seguintes (o x2t so e recriado\n"
+           "        // com o editor). Antes o build baixava e regravava todas a cada conversao; agora so se faltar alguma.\n"
+           "        var faltam = that.x2tModule ? fontesQueFaltam(that.x2tModule.FS) : null;\n"
+           "        if (faltam && faltam.length === 0) return;\n")
+    trocar(x2t,
+           "                    await self.writeMediaFiles(medias);\n"
+           "                    await self.fetchFonts();\n",
+           "                    await self.writeMediaFiles(medias);\n"
+           "                    // Possari: o .docx nao usa fontes (so a saida em PDF passa <m_sFontDir> ao x2t): nao busca.\n"
+           "                    if (targetExt.toLowerCase() !== '.docx') await self.fetchFonts();\n")
+    print('conversor: fontes guardadas entre conversoes; .docx sem buscar fontes (x2t_helper.js)')
+
+
 # ---------------------------------------------------------------- nomes dos estilos em portugues
 # O editor em pt-BR carrega locale/pt.json ('pt-br' nao esta entre os idiomas de 4 letras do build -- pt-pt, zh-tw,
 # sr-cyrl -- e cai em 'pt'). Ali Title vinha "Titulo", Subtitle "Legenda" (igual a Caption), Heading 1..9
@@ -523,6 +576,7 @@ def main():
 
     limpar_fontes(dest)
     corrigir_mensagens(dest)
+    guardar_fontes_do_conversor(dest)
     traduzir_estilos(dest)
     aplicar_csp(dest)
     n = sum(len(f) for _r, _d, f in os.walk(os.path.join(dest, V.split('/')[0])))

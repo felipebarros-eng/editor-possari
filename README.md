@@ -69,11 +69,17 @@ Google Drive  ->  Biblioteca (Apps Script)  ->  possari.html (este site, no nave
      com internet lenta. Abaixo de uns 6 a 10 Mbit/s, a abertura falhava com "Ocorreu um erro ao abrir o arquivo";
   8. nomes dos estilos em português como no Word (`locale/pt.json`, que é o arquivo que o editor carrega em pt-BR):
      Title → "Título", Subtitle → "Subtítulo", Heading 1…9 → "Título 1…9", Quote → "Citação",
-     Intense Quote → "Citação Intensa" (antes: "Titulo", "Legenda", "Cabeçalho 1…9", "Citar"; Caption continua "Legenda").
+     Intense Quote → "Citação Intensa" (antes: "Titulo", "Legenda", "Cabeçalho 1…9", "Citar"; Caption continua "Legenda");
+  9. o conversor `x2t` guarda as fontes do documento entre uma conversão e outra (`x2t_helper.js`). Antes ele baixava de
+     novo e regravava todas a cada conversão (22 arquivos, 7 MB numa peça comum), inclusive ao gerar o `.docx`, que não
+     usa fontes; agora só busca quando falta alguma, e o `.docx` não busca nenhuma. O "Gerar PDF" da Biblioteca (salva o
+     `.docx` e exporta o PDF) pagava isso duas vezes, e depois dos 10 minutos de cache do GitHub Pages eram 44
+     revalidações de fontes por clique.
 - `possari.html` e `possari.js` não vêm do ONLYOFFICE: são a ponte escrita para a Possari.
   Ela também muda o comportamento do editor em tempo de execução: troca a função de salvar do editor (`asc_Save`, usada
   pelo Ctrl+S, pelo disquete e por "Arquivo › Salvar") por um aviso à Biblioteca, e marca o documento como salvo só
-  depois que a Biblioteca recebe o `.docx`.
+  depois que a Biblioteca recebe o `.docx`. Uns 2 segundos depois que o documento abre, com o navegador ocioso, ela pede
+  ao conversor que já guarde as fontes do documento (alteração 9), para o primeiro PDF não esperar por elas.
 - As fontes têm licenças próprias (OFL, Apache, GPL com exceção de fontes etc.): veja `fontes/LICENCAS.md`.
 
 ## Como a Biblioteca conversa com a ponte (`possari.html`)
@@ -85,7 +91,7 @@ Google Drive  ->  Biblioteca (Apps Script)  ->  possari.html (este site, no nave
 | ponte → Biblioteca | `{type:'documento-pronto'}` |
 | ponte → Biblioteca | `{type:'alterado', alterado:true/false}` quando o documento passa a ter (ou deixa de ter) alterações não salvas. Só vira `false` depois de um `salvar` docx bem-sucedido em que ninguém editou durante o salvamento |
 | ponte → Biblioteca | `{type:'pedido-salvar'}` quando a pessoa usa Ctrl+S, o disquete ou "Arquivo › Salvar" no editor. A Biblioteca faz o mesmo que o seu botão Salvar (pede `salvar` docx e grava no Drive). O editor não gera arquivo nem deixa de estar modificado por causa disso |
-| Biblioteca → ponte | `{type:'salvar', requestId, formato:'docx' ou 'pdf'}` |
+| Biblioteca → ponte | `{type:'salvar', requestId, formato:'docx' ou 'pdf'}`. Pedidos seguidos são atendidos um de cada vez, na ordem em que chegaram, e cada um recebe o seu `salvo`: a Biblioteca pode pedir o `pdf` logo depois do `docx`, sem esperar a resposta |
 | ponte → Biblioteca | `{type:'salvo', requestId, ok, formato, buffer}` (ou `ok:false` com `erro`) |
 | Biblioteca → ponte | `{type:'estilo', nome:'Heading 1'}` aplica ao parágrafo atual o estilo com esse nome (`Title`, `Subtitle`, `Normal`, `Heading 1/2/3`…) |
 | ponte → Biblioteca | `{type:'erro', erro}`: `estilo-desconhecido` (o documento não tem esse estilo), `documento-nao-aberto`, `arquivo-invalido` ou erro do editor |

@@ -5,10 +5,13 @@
 // Protocolo (versao 1)
 //   ponte -> pai: ponte-pronta {versao} | documento-pronto | alterado {alterado} | salvo {requestId, ok, formato, buffer?, erro?}
 //                 | pedido-salvar (Ctrl+S, disquete ou Arquivo > Salvar do editor) | erro {erro}
-//   pai -> ponte: abrir {nome, bytes, usuario:{id,nome}} | salvar {requestId, formato:'docx'|'pdf'} | estilo {nome}
+//   pai -> ponte: abrir {nome, bytes, usuario:{id,nome}, interface?:{compacta}} | salvar {requestId, formato:'docx'|'pdf'}
+//                 | estilo {nome}
 //   Varios 'salvar' podem chegar sem esperar o 'salvo' (no Gerar PDF a Biblioteca pede o docx e logo o pdf): ficam
 //   numa fila e sao atendidos um de cada vez, na ordem, cada um respondido pelo seu requestId. Gerar o pdf nao mexe no
 //   'alterado' (a Biblioteca v15.2 pede so o pdf quando nada mudou desde o ultimo docx).
+//   interface:{compacta:true} (opcional, v15.3) abre o editor compacto, para monitores pequenos; sem o campo, ou com
+//   compacta:false, a interface e a de sempre. Com ou sem ele, a folha que nao cabe na largura abre ajustada a ela.
 // Endereco: possari.html#origem=<origem do pai, codificada> (para navegadores sem location.ancestorOrigins).
 (function () {
   'use strict';
@@ -20,6 +23,8 @@
   var TEMPO_MAXIMO_SALVAR_MS = 120000;
   var INTERVALO_PEDIDO_SALVAR_MS = 1000;   // Ctrl+S segurado (repeticao da tecla) vira um pedido so
   var ESPERA_PREPARAR_FONTES_MS = 2000;    // depois que o documento abre, para nao disputar com a abertura
+  var ALTURA_RECOLHER_FAIXA_PX = 420;      // compacto: abaixo disso a faixa de botoes abre recolhida (as abas ficam)
+  var ESPERA_AJUSTAR_ZOOM_MS = 250;        // depois que a area do editor muda de tamanho, para o editor se ajustar antes
 
   var oo = document.getElementById('oo');
   var origemPai = descobrirOrigemPai();
@@ -32,6 +37,7 @@
   var emAndamento = null;
   var seq = 0;
   var ultimoPedidoSalvar = 0;
+  var zoom = null;               // zoom automatico do documento aberto (ver iniciarZoomAutomatico)
 
   function origemPermitida(origem) {
     return typeof origem === 'string' && ORIGENS_DO_PAI.some(function (re) { return re.test(origem); });
@@ -184,6 +190,80 @@
     paraPai({ type: 'pedido-salvar' });
   }
 
+  // ---------------------------------------------------------------- tamanho da folha na tela (zoom automatico)
+  // Vale com ou sem interface compacta. Se a folha nao cabe na largura do editor a 100%, a ponte liga o "Ajustar
+  // largura" do proprio editor, que acompanha a janela e os paineis. Quando ela volta a caber, volta a 100%. Nunca
+  // passa de 100%: num monitor de 1366 px o "Ajustar largura" puro abriria a folha a uns 150%, e num monitor baixo
+  // ela mostraria um terco a menos de texto. So age se o documento abriu no zoom padrao (100%; quem escolheu outro em
+  // Arquivo > Configuracoes avancadas fica com o seu) e para de vez quando a pessoa muda o zoom.
+  function iniciarZoomAutomatico() {
+    pararZoomAutomatico();
+    var api = apiEditor(), w = janelaEditor();
+    try {
+      var wc = api && api.WordControl;
+      if (!w || !wc || typeof wc.calculate_zoom_FitToWidth !== 'function' || typeof api.zoomFitToWidth !== 'function'
+        || typeof api.zoom !== 'function' || typeof api.asc_registerCallback !== 'function') return;
+      if (wc.m_nZoomType !== 0 || wc.m_nZoomValue !== 100) return;
+      var z = zoom = { api: api, nosso: false, desligado: false, timer: null, parar: null };
+      api.asc_registerCallback('asc_onZoomChange', function (valor, tipo) { if (zoom === z) zoomMudou(z, tipo); });
+      // area da folha: muda com a janela e tambem quando abre ou fecha um painel do editor (comentarios, busca...)
+      var area = w.document.getElementById('editor_sdk');
+      var mudou = function () { agendarAjusteZoom(z); };
+      if (area && typeof w.ResizeObserver === 'function') {
+        var obs = new w.ResizeObserver(mudou);
+        obs.observe(area);
+        z.parar = function () { obs.disconnect(); };
+      } else {
+        w.addEventListener('resize', mudou);
+        z.parar = function () { w.removeEventListener('resize', mudou); };
+      }
+      ajustarZoom(z);
+    } catch (e) {}
+  }
+
+  function pararZoomAutomatico() {
+    var z = zoom;
+    zoom = null;
+    if (!z) return;
+    clearTimeout(z.timer);
+    try { if (z.parar) z.parar(); } catch (e) {}
+  }
+
+  // Tipo do zoom no editor: 0 = valor fixo, 1 = ajustar a largura, 2 = ajustar a pagina.
+  // Com o "Ajustar largura" ligado pela ponte, o proprio editor reajusta (tipo 1) quando a area muda; a ponte so
+  // confere se nao passou de 100%. Qualquer outra mudanca que nao foi a ponte que fez e da pessoa.
+  function zoomMudou(z, tipo) {
+    if (z.nosso || z.desligado) return;
+    if (tipo === 1 && z.largura) { agendarAjusteZoom(z); return; }
+    z.desligado = true;
+    clearTimeout(z.timer);
+  }
+
+  function agendarAjusteZoom(z) {
+    if (z.desligado) return;
+    clearTimeout(z.timer);
+    z.timer = setTimeout(function () { ajustarZoom(z); }, ESPERA_AJUSTAR_ZOOM_MS);
+  }
+
+  function ajustarZoom(z) {
+    if (zoom !== z || z.desligado) return;
+    try {
+      var wc = z.api.WordControl, area = janelaEditor().document.getElementById('editor_sdk');
+      // sem a largura da folha, ou com o editor escondido, a conta nao vale (daria 99% ou o minimo de 5%)
+      if (!(wc.m_dDocumentPageWidth > 0) || !area || !area.clientWidth) return;
+      var cabeNaLargura = wc.calculate_zoom_FitToWidth();   // zoom em que a folha ocupa a largura da area
+      z.nosso = true;
+      if (cabeNaLargura < 100) {
+        if (wc.m_nZoomType !== 1) z.api.zoomFitToWidth();
+        z.largura = true;
+      } else {
+        if (wc.m_nZoomType !== 0 || wc.m_nZoomValue !== 100) z.api.zoom(100);
+        z.largura = false;
+      }
+    } catch (e) {
+    } finally { z.nosso = false; }
+  }
+
   // ---------------------------------------------------------------- pedidos do pai
   function abrir(d) {
     if (!comeca(d.bytes, 'PK')) { paraPai({ type: 'erro', erro: 'arquivo-invalido' }); return; }
@@ -192,6 +272,7 @@
     if (emAndamento) { clearTimeout(emAndamento.timer); responderSalvo(emAndamento, { ok: false, error: 'documento-trocado' }); emAndamento = null; }
     documentoAberto = false;
     ultimoAlterado = null;
+    pararZoomAutomatico();
     if (urlDocumento) URL.revokeObjectURL(urlDocumento);
     urlDocumento = URL.createObjectURL(new Blob([d.bytes], { type: MIME_DOCX }));
     var usuario = d.usuario || {};
@@ -224,7 +305,27 @@
         }
       }
     };
+    if (d.interface && d.interface.compacta === true) interfaceCompacta(configPendente.editorConfig.customization);
     enviarConfig();
+  }
+
+  // Interface compacta, para monitores pequenos: o maximo de folha sem tirar o que o advogado usa. So com opcoes do
+  // proprio OnlyOffice 9.3 (customization), sem mexer no build. Num editor de 512 px de altura sobram ~50 px a mais de
+  // folha (389 em vez de 339):
+  //   compactHeader        a linha de cima (logotipo, nome, salvar/imprimir/desfazer) vira a linha das abas: o
+  //                        logotipo do ONLYOFFICE continua (AGPL 7b) e os botoes passam para a faixa (24 px)
+  //   toolbarHideFileName  sem o nome do arquivo na linha das abas (a Biblioteca ja mostra o nome da peca)
+  //   hideRulers           sem as reguas (26 px na altura, 19 na largura); Ver > Regras mostra de novo
+  //   compactToolbar       so com a area muito baixa: a faixa de botoes abre recolhida (um clique na aba a mostra)
+  // A barra de status fica: Pagina X de Y, contagem de palavras, controle de alteracoes e zoom so estao nela.
+  // O que a pessoa escolhe no proprio editor (Ver > Regras, Ver > Sempre mostrar a barra de ferramentas) fica guardado
+  // pelo editor e vale por cima destes valores iniciais.
+  function interfaceCompacta(c) {
+    c.compactHeader = true;
+    c.toolbarHideFileName = true;
+    c.hideRulers = true;
+    var altura = window.innerHeight;
+    if (altura > 0 && altura < ALTURA_RECOLHER_FAIXA_PX) c.compactToolbar = true;
   }
 
   function enviarConfig() {
@@ -307,6 +408,7 @@
         documentoAberto = true;
         protegerSalvarQuandoPuder();
         prepararFontesDoConversor();
+        iniciarZoomAutomatico();
         if (urlDocumento) { URL.revokeObjectURL(urlDocumento); urlDocumento = null; }
         paraPai({ type: 'documento-pronto' });
         informarAlterado(false);

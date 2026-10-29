@@ -80,6 +80,9 @@ Google Drive  ->  Biblioteca (Apps Script)  ->  possari.html (este site, no nave
   pelo Ctrl+S, pelo disquete e por "Arquivo › Salvar") por um aviso à Biblioteca, e marca o documento como salvo só
   depois que a Biblioteca recebe o `.docx`. Uns 2 segundos depois que o documento abre, com o navegador ocioso, ela pede
   ao conversor que já guarde as fontes do documento (alteração 9), para o primeiro PDF não esperar por elas.
+  Para telas pequenas (seção abaixo), ela abre o editor compacto quando a Biblioteca pede, só com opções de
+  configuração do próprio ONLYOFFICE (`customization`), e ajusta o zoom pela API do editor quando a folha não cabe na
+  largura. Nada disso muda o código do editor: não há alteração nova na lista acima.
 - As fontes têm licenças próprias (OFL, Apache, GPL com exceção de fontes etc.): veja `fontes/LICENCAS.md`.
 
 ## Como a Biblioteca conversa com a ponte (`possari.html`)
@@ -87,7 +90,7 @@ Google Drive  ->  Biblioteca (Apps Script)  ->  possari.html (este site, no nave
 | Sentido | Mensagem |
 |---|---|
 | ponte → Biblioteca | `{type:'ponte-pronta', versao:'1'}` ao carregar |
-| Biblioteca → ponte | `{type:'abrir', nome, bytes:ArrayBuffer, usuario:{id, nome}}` |
+| Biblioteca → ponte | `{type:'abrir', nome, bytes:ArrayBuffer, usuario:{id, nome}, interface:{compacta:true}}`. O campo `interface` é opcional (desde a v15.3): com `compacta:true` o editor abre compacto (seção "Telas pequenas"); sem ele, ou com `compacta:false`, abre como sempre. Uma ponte antiga ignora o campo |
 | ponte → Biblioteca | `{type:'documento-pronto'}` |
 | ponte → Biblioteca | `{type:'alterado', alterado:true/false}` quando o documento passa a ter (ou deixa de ter) alterações não salvas. Só vira `false` depois de um `salvar` docx bem-sucedido em que ninguém editou durante o salvamento |
 | ponte → Biblioteca | `{type:'pedido-salvar'}` quando a pessoa usa Ctrl+S, o disquete ou "Arquivo › Salvar" no editor. A Biblioteca faz o mesmo que o seu botão Salvar (pede `salvar` docx e grava no Drive). O editor não gera arquivo nem deixa de estar modificado por causa disso |
@@ -106,6 +109,45 @@ quando existe, vale sozinho), a origem do `#origem` (Firefox não tem `ancestorO
 Script pode não mandar). Todas passam pela mesma lista de origens permitidas; um `#origem` fora dela é ignorado. Mesmo
 que alguém coloque um `#origem` falso, o navegador só entrega a mensagem se a janela de cima for de fato dessa origem, e
 o que chega dela continua sendo conferido.
+
+## Telas pequenas (interface compacta e zoom automático)
+
+Nos monitores do escritório (1366×600, 1024×600 de área útil dentro do navegador e da intranet), o editor normal usa
+uns 175 px de altura com cabeçalho, abas, faixa de botões, régua e barra de status, e sobra pouca folha. A partir da
+v15.3, a Biblioteca pode pedir o editor compacto no `abrir`, com `interface:{compacta:true}`.
+
+O compacto usa só opções de configuração do próprio ONLYOFFICE 9.3 (`editorConfig.customization`); o código do editor
+não muda:
+
+| Opção | O que faz |
+|---|---|
+| `compactHeader` | A linha de cima (logotipo, nome do arquivo, salvar, imprimir, desfazer) some e o que ela tinha vai para a linha das abas e para a faixa de botões. O logotipo do ONLYOFFICE continua à esquerda das abas (AGPL §7 b). Ganho: 24 px |
+| `toolbarHideFileName` | Sem o nome do arquivo na linha das abas; a Biblioteca já mostra o nome da peça na barra dela |
+| `hideRulers` | Sem as réguas: 26 px a mais na altura e 19 px na largura. "Ver › Regras" (é como o editor em português chama as réguas) mostra de novo |
+| `compactToolbar` | Só quando a área do editor tem menos de 420 px de altura: a faixa de botões abre recolhida (ficam as abas, e um clique na aba mostra os botões) |
+
+Continuam como estão as abas, a faixa de botões aberta (negrito, fontes, alinhamento, galeria de estilos), os menus da
+esquerda (busca, comentários, títulos, "Sobre") e da direita, e a barra de status, que é o único lugar com
+"Página X de Y", contagem de palavras, controle de alterações e zoom. Num editor de 512 px de altura (a vista do
+editor da Biblioteca num monitor de 1366×600), a folha passa de 339 para 389 px de altura.
+
+Sem `interface`, ou com `compacta:false` (ou qualquer valor que não seja `true`), o editor abre igual à v15.2.
+
+Zoom automático, com ou sem compacto:
+
+- Se a folha não cabe na largura do editor a 100%, a ponte liga o "Ajustar largura" do próprio editor (por exemplo,
+  76% numa área de 760 px). Ele acompanha a janela e os painéis que abrem ao lado da folha (títulos, comentários,
+  busca). Quando a folha volta a caber, a ponte volta para 100%.
+- Nunca passa de 100%. Num monitor de 1366 px, o "Ajustar largura" puro abriria a folha a uns 150%, e num monitor
+  baixo ela mostraria um terço a menos de texto. Nos tamanhos do escritório (1024, 1280, 1366 e 1600 px de largura) a
+  folha cabe e fica a 100%, como antes.
+- A ponte só mexe se o documento abriu no zoom padrão (100%). Quem escolheu outro em "Arquivo › Configurações
+  avançadas › Valor de zoom padrão" fica com o seu, e quando a pessoa muda o zoom (botões da barra de status, Ctrl +
+  roda do mouse, aba Ver), a ponte para de mexer até a próxima peça.
+
+O que a pessoa escolhe no próprio editor ("Ver › Regras", "Ver › Barra de status", "Ver › Sempre mostrar a barra de
+ferramentas", zoom padrão) fica guardado pelo editor neste navegador e vale por cima dos valores iniciais acima, nos dois
+modos. O compacto em si não fica guardado: a próxima peça aberta sem `interface` abre normal.
 
 ## Como atualizar o editor
 

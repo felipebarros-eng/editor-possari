@@ -37,6 +37,7 @@ Google Drive  ->  Biblioteca (Apps Script)  ->  possari.html (este site, no nave
 | `9.3.0.133-…/vendor/` | O editor ONLYOFFICE 9.3.0.133 só com a parte de texto (Word): `sdkjs`, `web-apps`, `x2t.wasm` (conversor de arquivos) e `fonts`. |
 | `fontes/LICENCAS.md`, `fontes/licencas/` | Lista de cada fonte com a sua licença e os textos das licenças. |
 | `ferramentas/montar.py` | Script que monta a pasta do editor a partir do build original e aplica as correções. |
+| `ferramentas/service_worker.js` | O service worker do editor (escrito para a Possari). O `montar.py` o copia para `9.3.0.133-…/vendor/document_editor_service_worker.js`, no lugar do que vem no build (seção "Cache do editor"). |
 | `ferramentas/relatorio_fontes.tsv` | Classificação de todas as fontes do build (o que ficou e o que saiu, e por quê). |
 | `LICENSE.txt` | Licença do editor: GNU AGPL versão 3. |
 | `.nojekyll` | Diz ao GitHub Pages para publicar os arquivos como estão. |
@@ -53,7 +54,7 @@ Google Drive  ->  Biblioteca (Apps Script)  ->  possari.html (este site, no nave
   `sdk-all-min.js`, `app.js`, `api.js` e os que ele corrige) antes de mexer em qualquer coisa; se algo mudou, ele para.
 - Como pede a AGPL (§7 b/e), o logotipo e a tela "Sobre" do ONLYOFFICE continuam no editor, e "ONLYOFFICE" **não** é
   usado como nome deste produto.
-- Este site é uma versão **modificada** (AGPL §5). Alterações feitas pela Possari em outubro de 2026, todas aplicadas
+- Este site é uma versão **modificada** (AGPL §5). Alterações feitas pela Possari em outubro e novembro de 2026, todas aplicadas
   por `ferramentas/montar.py` (o script confere o texto original de cada trecho antes de trocar):
   1. cópia só da parte de texto (sem planilhas, apresentações, ajuda online e arquivos `.map`);
   2. retiradas as fontes que não podem ser redistribuídas; as famílias delas usam fontes livres de mesmas medidas
@@ -64,7 +65,11 @@ Google Drive  ->  Biblioteca (Apps Script)  ->  possari.html (este site, no nave
   4. *Content-Security-Policy* em todas as páginas;
   5. correção de uma corrida do build (com o editor no cache, o documento podia chegar antes do catálogo de fontes e
      a abertura falhava);
-  6. textos de erro em português e `lang="pt-BR"` no `onlyoffice.html`;
+  6. textos de erro em português e `lang="pt-BR"` no `onlyoffice.html`. No mesmo arquivo, também: sai o
+     `<link rel="icon">` do build (o favicon daria 404, porque a pasta `assets/` não vem) e o seletor do quadro do editor
+     passa de `#editor iframe` para `iframe[name="frameEditor"]` (o `api.js` troca o `<div id="editor">` pelo quadro).
+     Hoje esta troca não muda nada: a marca `OO_FILE_STREAM_ONLY` já vale no próprio `onlyoffice.html`, e o
+     `x2t_helper.js` a procura nas janelas de cima;
   7. mais tempo (10 minutos em vez de 60 segundos) para o conversor `x2t.wasm` (42 MB) carregar na primeira abertura
      com internet lenta. Abaixo de uns 6 a 10 Mbit/s, a abertura falhava com "Ocorreu um erro ao abrir o arquivo";
   8. nomes dos estilos em português como no Word (`locale/pt.json`, que é o arquivo que o editor carrega em pt-BR):
@@ -74,7 +79,16 @@ Google Drive  ->  Biblioteca (Apps Script)  ->  possari.html (este site, no nave
      novo e regravava todas a cada conversão (22 arquivos, 7 MB numa peça comum), inclusive ao gerar o `.docx`, que não
      usa fontes; agora só busca quando falta alguma, e o `.docx` não busca nenhuma. O "Gerar PDF" da Biblioteca (salva o
      `.docx` e exporta o PDF) pagava isso duas vezes, e depois dos 10 minutos de cache do GitHub Pages eram 44
-     revalidações de fontes por clique.
+     revalidações de fontes por clique;
+  10. (v15.4) saíram os 3 pedidos que davam 404 em toda abertura: `themes.json` (temas extras de um servidor de
+      documentos, `app.js`) e o dicionário `en_US` do corretor (`dictionaries/en_US/en_US.aff` e `.dic`, `spell.js`;
+      este site não tem dicionários e o corretor fica desligado). O editor fica exatamente como ficava com os 404: sem
+      temas extras, e o dicionário que não chega nunca é usado;
+  11. (v15.4) o *service worker* do build (`vendor/document_editor_service_worker.js`, que o editor registra) foi trocado
+      pelo `ferramentas/service_worker.js`. O do build buscava tudo na rede e só usava a cópia dele sem internet: online
+      só atrasava (+0,5 s por peça) e regravava ~137 MB no disco a cada abertura. O novo serve os arquivos do programa
+      direto do *Cache Storage* do navegador, um cache por versão do site, e só guarda o arquivo que tem o tamanho certo
+      (o `montar.py` grava nele o tamanho de cada arquivo do programa; seção "Cache do editor").
 - `possari.html` e `possari.js` não vêm do ONLYOFFICE: são a ponte escrita para a Possari.
   Ela também muda o comportamento do editor em tempo de execução: troca a função de salvar do editor (`asc_Save`, usada
   pelo Ctrl+S, pelo disquete e por "Arquivo › Salvar") por um aviso à Biblioteca, e marca o documento como salvo só
@@ -82,7 +96,10 @@ Google Drive  ->  Biblioteca (Apps Script)  ->  possari.html (este site, no nave
   ao conversor que já guarde as fontes do documento (alteração 9), para o primeiro PDF não esperar por elas.
   Para telas pequenas (seção abaixo), ela abre o editor compacto quando a Biblioteca pede, só com opções de
   configuração do próprio ONLYOFFICE (`customization`), e ajusta o zoom pela API do editor quando a folha não cabe na
-  largura. Nada disso muda o código do editor: não há alteração nova na lista acima.
+  largura. Antes de carregar o editor, ela pede ao navegador que confira se o service worker do site mudou (seção
+  "Cache do editor"). Nada disso muda o código do editor: não há alteração nova na lista acima.
+- `ferramentas/service_worker.js` também não vem do ONLYOFFICE: foi escrito para a Possari e substitui o do build
+  (alteração 11).
 - As fontes têm licenças próprias (OFL, Apache, GPL com exceção de fontes etc.): veja `fontes/LICENCAS.md`.
 
 ## Como a Biblioteca conversa com a ponte (`possari.html`)
@@ -149,6 +166,97 @@ O que a pessoa escolhe no próprio editor ("Ver › Regras", "Ver › Barra de s
 ferramentas", zoom padrão) fica guardado pelo editor neste navegador e vale por cima dos valores iniciais acima, nos dois
 modos. O compacto em si não fica guardado: a próxima peça aberta sem `interface` abre normal.
 
+## Cache do editor (service worker, desde a v15.4)
+
+O editor tem uns 75 MB (o conversor `x2t.wasm` sozinho tem 42 MB). O GitHub Pages manda guardar cada arquivo por só
+10 minutos; depois disso, a cada peça aberta o navegador perguntava ao site por uns 95 arquivos ("mudou?"). E o
+`x2t.wasm` pode nem caber no cache comum do Chrome (que não guarda arquivos maiores que 1/8 do tamanho dele) e ser
+baixado de novo a cada peça: 3 a 7 segundos a mais.
+
+O *service worker* (`ferramentas/service_worker.js`, registrado pelo próprio editor com escopo `9.3.0.133-…/vendor/`):
+
+- serve os arquivos do programa do *Cache Storage* do navegador, sem ir à rede. Só busca na rede o que ainda não
+  tem e guarda se veio inteiro e certo: resposta 200 deste site, sem redirecionamento, que não seja uma página HTML no
+  lugar de outro arquivo e que tenha exatamente o tamanho daquele arquivo nesta versão (a lista `TAMANHOS`, gravada
+  pelo `montar.py`). Como o que fica guardado não volta à rede, uma página de bloqueio de um proxy ou antivírus com 200
+  no lugar do `x2t.wasm`, guardada, deixaria o editor sem abrir nenhuma peça naquele navegador; agora ela chega à
+  página como veio, não é guardada, e a peça seguinte busca de novo (testado). A conferência é só pelo tamanho: um
+  arquivo de outra versão com o mesmo número de bytes seria guardado. O arquivo é lido na memória antes de ser
+  guardado: com o disco do computador quase cheio (~1% livre), o Chrome não guardava de outro jeito o `x2t.wasm` nem o
+  `sdk-all.js`, e o ganho sumia sem aviso (testado);
+- só guarda arquivos do programa: pedidos `GET` de `vendor/web-apps/`, `vendor/sdkjs/` e `vendor/fonts/`. **Nunca guarda
+  documento**: a peça chega por `postMessage` e vira `blob:`, que não passa pelo service worker. `possari.html`,
+  `possari.js`, `onlyoffice.html` e respostas com erro (404, 500, parciais) também nunca são guardados;
+- usa um cache por versão do site: `editor-possari-<resumo>`, em que o resumo é o sha256 de todos os arquivos do editor
+  já corrigidos, calculado pelo `montar.py`. Qualquer mudança no editor muda o resumo, e com ele o service worker;
+- quando o site muda, a 1ª peça aberta depois já é toda da versão nova. Por conta própria, o navegador só conferia o
+  service worker depois de abrir o editor, já servido pelo service worker antigo: a 1ª peça rodava o programa velho
+  com a ponte nova, e a versão nova só valia da 2ª em diante. Agora a ponte (`possari.js`) pede essa conferência antes
+  de carregar o editor e, se houver um service worker novo, espera ele instalar (no máximo 2 s; sem service worker ou
+  com erro, segue na hora). Custo: uma ida ao GitHub a mais, antes do editor, em toda peça (~0,13 s medidos com 120 ms
+  por pedido e a leitura do Drive instantânea); no uso real ela corre junto com a leitura da peça no Drive, que demora
+  mais, e quase sempre fica escondida. O novo só assume quando nenhum editor da versão anterior está aberto: uma peça
+  aberta naquele momento (em outra aba, por exemplo) continua com os arquivos da versão com que começou, e, enquanto
+  ela continuar aberta, as peças abertas em outras abas do mesmo navegador também rodam o programa anterior, com a
+  ponte nova (as duas falam o mesmo protocolo; testado). Depois que ela fechar, a peça seguinte já vem toda nova. A
+  outra exceção é voltar o site para a v15.3, que não tem essa conferência (veja abaixo). Ao assumir, ele apaga
+  os caches das versões anteriores (e o `document_editor_static_…` do service worker do build). Caches de outros sites
+  no mesmo endereço `felipebarros-eng.github.io` não são tocados. `possari.html`, `possari.js`, `onlyoffice.html` e
+  `api.js` ficam fora do service worker e seguem o cache comum (até 10 minutos depois de publicar, podem vir da versão
+  anterior, como antes da v15.4);
+- cada arquivo da versão nova é conferido com o site uma vez (`no-cache`), para não guardar um arquivo antigo que ainda
+  estivesse no cache comum do navegador logo depois de publicar.
+
+O navegador guarda isso por site de cima: na intranet é um cache, abrindo a Biblioteca direto pelo `script.google.com`
+é outro. Se o navegador não deixar o service worker funcionar, o editor funciona igual, só com o cache comum, como
+antes da v15.4 (testado). Isso acontece com **"Bloquear cookies de terceiros"** ligado no Chrome (ou a política
+`BlockThirdPartyCookies` da empresa): dentro da intranet o editor é um site de terceiro, e o Chrome 153 não deixa
+terceiros registrarem service worker nem usarem o Cache Storage nesse modo. Deve acontecer o mesmo na janela anônima,
+que bloqueia cookies de terceiros por padrão (não testado). Para conferir num PC: DevTools (F12) › Network, abrir uma
+peça duas vezes; na segunda, o `x2t.wasm` deve aparecer como "(ServiceWorker)".
+
+O nome do cache resume os arquivos do editor, não o service worker. Uma mudança só no `ferramentas/service_worker.js`
+(refeito com `python3 ferramentas/montar.py --so-service-worker`, sem baixar o build) mantém o cache e o que já está nele.
+
+**Limpar o cache do editor num computador** (se um dia o editor não abrir em um PC só): no Chrome, abra a Biblioteca
+pela intranet e **abra uma peça** (mesmo que ela não chegue a abrir). Sem peça aberta, o editor não está na página e o
+F12 não mostra o cache dele. Com ela aberta, F12 › **Aplicativo** (*Application*) › **Armazenamento em cache** (*Cache
+storage*): clique com o botão direito em cada `editor-possari-…` › **Excluir**. A peça seguinte busca o editor de novo
+(até ~75 MB; o que ainda estiver no cache comum do Chrome não é baixado outra vez). Isso vale para o lugar onde a peça
+foi aberta: o cache é separado por site de cima (a intranet é um; a Biblioteca aberta direto pelo `script.google.com` é
+outro). Último recurso, fora da Biblioteca: abrir `https://felipebarros-eng.github.io/editor-possari/possari.html`,
+F12 › Aplicativo › **Armazenamento** (*Storage*) › **Limpar dados do site** (*Clear site data*). Isso apaga **tudo** o que
+`felipebarros-eng.github.io` guardou quando aberto direto, também de outros sites do GitHub Pages dessa conta, e não
+alcança o cache usado dentro da intranet.
+
+**Voltar o site para a versão anterior (v15.3).** Como: no clone do repositório, `git revert` do(s) commit(s) da v15.4
+(ou troque o conteúdo pelo da pasta `editor_site_v15_3`: `rsync -a --delete --exclude .git editor_site_v15_3/
+editor-possari/`, `git add -A` e `git commit -m "Editor: volta para a v15.3"`) e `git push origin main main:gh-pages`. Em 1
+ou 2 minutos o GitHub Pages publica. O editor funciona, com duas diferenças:
+
+- a **1ª peça** de cada navegador depois da volta ainda roda o programa da v15.4 guardado (com a ponte, o
+  `onlyoffice.html` e o `api.js` da v15.3): a ponte da v15.3 não pede ao navegador que confira o service worker antes de
+  carregar o editor. Vale para cada lugar onde a Biblioteca abre (a intranet e o `script.google.com` têm caches
+  separados). Se a volta for por causa de um defeito do programa da v15.4, essa peça ainda o tem: feche-a (**Voltar**) e
+  abra de novo; da 2ª peça em diante, tudo é da v15.3 (testado);
+- o service worker da v15.3 (o do build) só apaga os caches `document_editor_static_…`: cada navegador fica com o
+  `editor-possari-…` da v15.4 (~75 MB) sem uso, além do cache da v15.3. Ele é reaproveitado (ou apagado, se for de outra
+  versão) quando o site da v15.4 for publicado de novo, ou pode ser apagado como acima.
+
+Para voltar e manter a volta sem esses ~75 MB, publique a v15.3 com uma mudança no
+`9.3.0.133-…/vendor/document_editor_service_worker.js` dela, na função de ativação: troque a linha
+
+`if (cache.includes(g_cacheNamePrefix) && !cache.includes(g_cacheName)) {`
+
+por
+
+`if ((cache.includes(g_cacheNamePrefix) && !cache.includes(g_cacheName)) || cache.indexOf('editor-possari-') === 0) {`
+
+(com `||`; ligada com `&&`, nada é apagado). Testado na revisão: da 2ª peça em diante fica só o cache da v15.3, também
+com o navegador reaberto; publicar a v15.4 de novo refaz o `editor-possari-…`.
+
+Os números (A/B com a v15.3, no Chromium 153) estão na seção "Tamanho".
+
 ## Como atualizar o editor
 
 1. Num computador com `git` e Python 3, dentro desta pasta: `python3 ferramentas/montar.py`
@@ -156,8 +264,12 @@ modos. O compacto em si não fica guardado: a próxima peça aberta sem `interfa
    `9.3.0.133-…`, `onlyoffice.html`, `LICENSE.txt`, `fontes/LICENCAS.md` e `ferramentas/relatorio_fontes.tsv`.
 2. Para uma versão nova, troque `VERSAO`, `COMMIT`, `V` e os valores de `SHA256_DO_BUILD` no começo do script
    (confira o código novo antes). Se o commit ou um arquivo não for o esperado, ou se o build mudou um trecho que o
-   script corrige, ele para e diz qual: ajuste a correção antes de publicar.
-3. Rode o teste automático (fica com a equipe, fora deste repositório: `editor_site_testes/teste.js`), que abre uma
+   script corrige, ele para e diz qual: ajuste a correção antes de publicar. O último passo do script grava o service
+   worker com o resumo e os tamanhos dos arquivos do editor: **não mude nada dentro de `9.3.0.133-…` à mão**; mude o
+   `montar.py` e rode de novo (o teste confere que o resumo e os tamanhos do service worker batem com os arquivos
+   publicados). Para mudar só o service worker, edite `ferramentas/service_worker.js` e rode
+   `python3 ferramentas/montar.py --so-service-worker`.
+3. Rode o teste automático (fica com a equipe, fora deste repositório: `editor_site_testes_v15_4/teste.js`), que abre uma
    peça de exemplo, edita, salva `.docx`/`.pdf` e confere a segurança.
 4. Publique: commit e push nos ramos `main` e `gh-pages` (`git push origin main main:gh-pages`). O GitHub Pages
    publica o ramo `gh-pages`, pasta raiz. Nenhum arquivo pode passar de 95 MB (o maior hoje é o `x2t.wasm`, com 40 MB).
@@ -168,4 +280,25 @@ modos. O compacto em si não fica guardado: a próxima peça aberta sem `interfa
 - Na primeira abertura o navegador baixa só o necessário: 74 arquivos, 74 MB sem compressão (cerca de 56 MB com a
   compressão que o GitHub Pages aplica a HTML/JS/CSS, ou 23 MB se ele comprimir também o `.wasm`). Das 186 fontes,
   só vêm as usadas (21 arquivos, 7 MB: Liberation, Carlito, Caladea, OpenSymbol).
-- Nas aberturas seguintes os arquivos vêm do cache do navegador (no teste: 0 bytes baixados).
+- Nas aberturas seguintes os arquivos do programa vêm do service worker, sem ir à rede, mesmo depois dos 10 minutos
+  do GitHub Pages. Antes dos 10 minutos o navegador só confere o próprio service worker (2 ou 3 pedidos de 0 byte,
+  304: o do navegador e o da ponte, que pede a conferência antes do editor); depois, também `possari.html`,
+  `possari.js`, `onlyoffice.html` e `api.js`, que ficam fora do escopo dele: 6 ou 7 pedidos de 0 byte, contra uns 95
+  antes.
+- A/B v15.3 × v15.4 no Chromium 153, peça de exemplo, iframe novo a cada peça (como a Biblioteca), site servido
+  localmente com os cabeçalhos do GitHub Pages; medianas de 3 a 5 rodadas intercaladas (medido antes de a ponte
+  conferir o service worker, que acrescenta 1 pedido de 0 byte por peça):
+
+  | Situação | v15.3 | v15.4 | sem service worker (só cache HTTP) |
+  |---|---|---|---|
+  | Peça aberta antes dos 10 min (cache válido) | 1,79 s | 1,36 s | 1,30 s |
+  | Idem, com 45 s entre uma peça e outra (service worker parado) | 1,74 s | 1,44 s | 1,44 s |
+  | Depois dos 10 min (tudo vencido, 50 ms por pedido) | 2,33 s, 99 pedidos | 1,62 s, 5 pedidos | 2,02 s, 95 pedidos |
+  | Navegador reiniciado, cache vencido (50 ms por pedido) | 3,16 s | 1,97 s | 2,57 s |
+  | Navegador reiniciado, cache ainda válido | 2,33 s | 1,93 s | 1,66 s |
+  | Gravado em disco por abertura | ~240 MB | ~80 MB | ~77 MB |
+  | Cache HTTP de 80, 200 ou 320 MiB: baixado a cada peça | 42 a 56 MB (`x2t.wasm` sempre) | 0 (`x2t.wasm` do service worker) | 42 a 56 MB |
+
+  Os tempos são de rede local, sem limite de velocidade: baixar de novo os 42 MB do `x2t.wasm` custaria mais uns 3,4 s
+  a 100 Mbit/s (conta, não medido). A primeira abertura num navegador (ou depois de publicar uma versão nova) fica uns
+  0,3 s mais lenta que sem service worker, porque ele guarda os arquivos; o mesmo acontecia com o do build.

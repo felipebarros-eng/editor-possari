@@ -25,6 +25,7 @@
   var ESPERA_PREPARAR_FONTES_MS = 2000;    // depois que o documento abre, para nao disputar com a abertura
   var ALTURA_RECOLHER_FAIXA_PX = 420;      // compacto: abaixo disso a faixa de botoes abre recolhida (as abas ficam)
   var ESPERA_AJUSTAR_ZOOM_MS = 250;        // depois que a area do editor muda de tamanho, para o editor se ajustar antes
+  var ESPERA_CONFERIR_PROGRAMA_MS = 2000;  // no maximo, para o navegador conferir e instalar o service worker novo
 
   var oo = document.getElementById('oo');
   var origemPai = descobrirOrigemPai();
@@ -437,8 +438,43 @@
     else if (d.type === 'estilo') aplicarEstilo(d);
   });
 
+  // ---------------------------------------------------------------- versao do programa (v15.4)
+  // O service worker do site (escopo vendor/) serve o programa do editor do cache dele, e o navegador so confere se ele
+  // mudou depois da navegacao do editor (index.html), que o service worker antigo ja serviu: a 1a peca depois de cada
+  // publicacao rodava o programa velho com esta ponte, o onlyoffice.html e o api.js novos. Aqui a ponte pede essa
+  // conferencia antes de carregar o editor e, se houver um service worker novo, espera ele terminar de instalar (no
+  // maximo ESPERA_CONFERIR_PROGRAMA_MS); como nenhum editor da versao anterior esta aberto (a Biblioteca descarta o
+  // iframe ao fechar a peca), a navegacao do editor ja ativa o novo. Sem service worker (bloqueado, "Bloquear cookies de
+  // terceiros"), sem rede ou com qualquer erro: carrega na hora, como antes.
+  function conferirProgramaECarregar(carregar) {
+    var feito = false;
+    var seguir = function () { if (!feito) { feito = true; carregar(); } };
+    setTimeout(seguir, ESPERA_CONFERIR_PROGRAMA_MS);
+    var sw = null;
+    try { sw = navigator.serviceWorker; } catch (e) {}
+    if (!sw || typeof sw.getRegistrations !== 'function') return seguir();
+    // So os registros deste site (outros sites da mesma origem, como felipebarros-eng.github.io/outro/, ficam de fora).
+    var base = location.href.split('#')[0].split('?')[0].replace(/[^\/]*$/, '');
+    var instalado = function (novo) {
+      if (!novo || novo.state !== 'installing') return Promise.resolve();
+      return new Promise(function (ok) {
+        novo.addEventListener('statechange', function () { if (novo.state !== 'installing') ok(); });
+      });
+    };
+    try {
+      sw.getRegistrations().then(function (registros) {
+        return Promise.all(registros.filter(function (r) { return String(r.scope).indexOf(base) === 0; }).map(function (r) {
+          return r.update().then(function () { return instalado(r.installing); });
+        }));
+      }).then(seguir, seguir);
+    } catch (e) {
+      seguir();
+    }
+  }
+
   // O editor so comeca a carregar depois que a ponte ja ouve as mensagens dele: se possari.js chegasse depois do
   // onlyoffice.html (rede lenta so neste arquivo), o aviso 'onlyoffice-ready' se perderia e o documento nao abriria.
-  oo.src = 'onlyoffice.html';
+  // A Biblioteca ja pode mandar a peca: ela espera em configPendente ate o editor avisar que carregou.
+  conferirProgramaECarregar(function () { oo.src = 'onlyoffice.html'; });
   paraPai({ type: 'ponte-pronta', versao: VERSAO });
 })();

@@ -15,15 +15,29 @@ O que faz, nesta ordem:
   6. da mais tempo (10 min, em vez de 60 s) para o x2t.wasm (42 MB) baixar na 1a abertura com internet lenta;
   7. nomes dos estilos em portugues como no Word (Titulo, Subtitulo, Titulo 1..9, Citacao...) no idioma pt;
   8. o conversor (x2t) guarda as fontes entre uma conversao e outra e nao busca fontes para gerar .docx (antes cada
-     conversao baixava e regravava todas: Gerar PDF pagava isso 2 vezes).
+     conversao baixava e regravava todas: Gerar PDF pagava isso 2 vezes);
+  9. tira os 3 pedidos que davam 404 em toda abertura (themes.json e o dicionario en_US do corretor, que este site
+     nao tem), sem mudar o que o editor faz;
+ 10. troca o service worker do build ('network-first', so atrapalhava online) pelo ferramentas/service_worker.js
+     ('cache-first', um cache por versao do site); o nome do cache leva o resumo (sha256) de todos os arquivos do
+     editor ja corrigidos, entao qualquer mudanca no site troca o cache. Grava nele tambem o tamanho de cada arquivo
+     do programa (TAMANHOS): so o arquivo com o tamanho certo e guardado (uma pagina de bloqueio de proxy com 200 no
+     lugar do x2t.wasm nao fica). Fica por ultimo, depois de todas as correcoes.
+
+As alteracoes do passo 3 no onlyoffice.html incluem tambem: lang="pt-BR" e os textos de erro em portugues; tirar o
+<link rel="icon"> do build (o favicon daria 404: a pasta assets/ nao vem); e o seletor do quadro do editor
+('#editor iframe' -> 'iframe[name="frameEditor"]'), que hoje nao muda nada, porque a marca OO_FILE_STREAM_ONLY ja vale
+no proprio onlyoffice.html e o x2t_helper.js a procura nas janelas de cima.
 
 Nao mexe em possari.html, possari.js, README.md, .nojekyll, .gitignore, fontes/licencas/ nem nesta pasta
-ferramentas/ (alem do relatorio_fontes.tsv, que ele mesmo gera).
+ferramentas/ (alem do relatorio_fontes.tsv, que ele mesmo gera; o service_worker.js daqui so e lido).
 Cada correcao confere o texto exato do build; se o build mudar, o script para e diz o que nao achou.
 
 Uso:
   python3 ferramentas/montar.py                      # baixa o build do GitHub (precisa de git) e monta na pasta do site
   python3 ferramentas/montar.py --origem <clone>     # usa um clone ja baixado (commit COMMIT da branch 9.3.0.133)
+  python3 ferramentas/montar.py --so-service-worker  # so refaz o service worker (passo 10) num site ja montado, depois
+                                                     # de mudar o ferramentas/service_worker.js (o build nao muda)
 """
 import argparse, atexit, base64, hashlib, json, os, re, shutil, struct, subprocess, sys, tempfile
 
@@ -452,6 +466,28 @@ def traduzir_estilos(dest):
     print('estilos: %d nomes como no Word em portugues (locale/pt.json)' % len(ESTILOS_COMO_NO_WORD))
 
 
+# ---------------------------------------------------------------- pedidos que davam 404 em toda abertura
+# O editor pedia 3 arquivos que o build nao traz e que davam 404 a cada peca aberta (com o service worker, iam sempre a
+# rede): vendor/themes.json (temas extras de um servidor de documentos) e o dicionario en_US do corretor
+# (dictionaries/en_US/en_US.aff e .dic; este site nao tem a pasta dictionaries/ e o corretor fica desligado).
+# As correcoes deixam o editor fazendo exatamente o que fazia com os 404, sem os pedidos.
+def tirar_pedidos_404(dest):
+    for app in ['web-apps/apps/documenteditor/main/app.js', 'web-apps/apps/documenteditor/main/ie/app.js']:
+        # Com o 404, o loadConfig so avisava 'failed to load/parse themes.json' no console e nada mudava.
+        trocar(os.path.join(dest, V, app), ':h.call(this,"../../../../themes.json")}',
+               ':void 0/* Possari: este site nao tem themes.json (temas extras); antes era um 404 a cada abertura */}',
+               opcional=app.endswith('ie/app.js'))
+    # Trabalhador do corretor: o editor manda as palavras marcadas em ingles (1033) para conferir; o trabalhador pedia
+    # en_US.aff e en_US.dic, recebia 404 e o dicionario ficava "carregando" para sempre (load_file so conta resposta
+    # 200; nada era conferido nem respondido). Agora fica no mesmo estado sem pedir nada.
+    trocar(os.path.join(dest, V, 'sdkjs/common/spell/spell/spell.js'),
+           'this.load_file(self.spellchecker.languagesPath+"/"+this.language.aff,"aff");\n'
+           'this.load_file(self.spellchecker.languagesPath+"/"+this.language.dic,"dic")};',
+           '/* Possari: este site nao tem dicionarios (pasta dictionaries/). Antes pedia o .aff e o .dic, recebia 404 e o\n'
+           'dicionario ficava sem carregar (status 0): o mesmo estado de agora, sem os 2 pedidos. */};')
+    print('404: sem pedir themes.json nem dictionaries/<idioma>/*.aff|.dic (app.js, spell.js)')
+
+
 # ---------------------------------------------------------------- Content-Security-Policy
 def politica(hashes):
     extra = ''.join(" 'sha256-%s'" % h for h in sorted(hashes))
@@ -501,6 +537,75 @@ def aplicar_csp(dest):
     print('CSP aplicada em %d paginas HTML do build' % n)
 
 
+# ---------------------------------------------------------------- service worker 'cache-first' por versao do site
+# O build registra vendor/document_editor_service_worker.js (escopo vendor/) no index.html do editor. O dele era
+# 'network-first': online pedia tudo a rede (com o cache HTTP) e regravava cada arquivo no Cache Storage, ~137 MB por
+# abertura, +0,5 s por peca; depois dos 10 min do GitHub Pages, ~95 revalidacoes por abertura; e o x2t.wasm (42 MB)
+# pode nao caber no cache HTTP do Chrome (1/8 do tamanho dele) e ser baixado de novo a cada peca (medido num A/B no
+# Chromium 153, fora deste repositorio). O de agora e o ferramentas/service_worker.js (comentado la): serve do Cache
+# Storage sem ir a rede, so arquivos do programa, um cache por versao. VERSAO = resumo de todos os arquivos do editor ja
+# corrigidos (este passo vem depois de todos os outros), entao qualquer mudanca no site gera outro service worker e
+# outro cache, e o antigo e apagado.
+SW = V + '/document_editor_service_worker.js'
+# trechos que confirmam que o build ainda e o de antes (registro no index.html e o 'network-first' do build)
+SW_REGISTRO = 'const serviceWorkerName="document_editor_service_worker.js";const serviceWorkerPath="../../../../"+serviceWorkerName;'
+SW_DO_BUILD = ['function networkFirst(event) {', "const g_cacheNamePrefix = 'document_editor_static_';"]
+# trechos que confirmam que o service worker no site ja e o deste script (para --so-service-worker)
+SW_DESTE_SCRIPT = ["var PREFIXO = 'editor-possari-';", "self.addEventListener('fetch'"]
+
+
+def versao_do_site(dest):
+    """sha256 (16 primeiros hex) de todos os arquivos de vendor/ menos o proprio service worker: caminho e sha256 de cada
+    um, em ordem. teste.js (editor_site_testes) refaz a mesma conta e confere com a do service worker publicado."""
+    raiz = os.path.join(dest, V)
+    lista = []
+    for r, _d, arqs in os.walk(raiz):
+        for a in arqs:
+            rel = os.path.relpath(os.path.join(r, a), raiz).replace(os.sep, '/')
+            if rel != os.path.basename(SW):
+                lista.append(rel)
+    h = hashlib.sha256()
+    for rel in sorted(lista):
+        h.update(('%s\n%s\n' % (rel, sha256_arquivo(os.path.join(raiz, rel)))).encode('utf-8'))
+    return h.hexdigest()[:16], len(lista)
+
+
+def tamanhos_do_site(dest):
+    """{'pasta/': {'arquivo': bytes}} dos arquivos de vendor/web-apps, vendor/sdkjs e vendor/fonts (o que o service
+    worker guarda), ja corrigidos. O service worker so guarda o arquivo que tem exatamente esse tamanho."""
+    raiz = os.path.join(dest, V)
+    tamanhos = {}
+    for pasta in ('web-apps', 'sdkjs', 'fonts'):
+        for r, _d, arqs in os.walk(os.path.join(raiz, pasta)):
+            for a in arqs:
+                rel = os.path.relpath(os.path.join(r, a), raiz).replace(os.sep, '/')
+                dirname, nome = rel.rsplit('/', 1)
+                tamanhos.setdefault(dirname + '/', {})[nome] = os.path.getsize(os.path.join(r, a))
+    return tamanhos
+
+
+def trocar_service_worker(dest, refazer=False):
+    """refazer: o site ja tem o service worker deste script (--so-service-worker), e nao o do build."""
+    index = os.path.join(dest, V, 'web-apps/apps/documenteditor/main/index.html')
+    if open(index, encoding='utf-8').read().count(SW_REGISTRO) != 1:
+        falhar('%s: o registro do service worker mudou (esperava %r)' % (index, SW_REGISTRO[:80]))
+    caminho = os.path.join(dest, SW)
+    antigo = open(caminho, encoding='utf-8').read()
+    for trecho in (SW_DESTE_SCRIPT if refazer else SW_DO_BUILD):
+        if trecho not in antigo:
+            falhar('%s: %s (nao achei %r)' % (caminho, 'nao e o service worker deste script' if refazer else 'o service worker do build mudou', trecho))
+    modelo = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'service_worker.js'), encoding='utf-8').read()
+    for marcador in ("'__VERSAO_DO_SITE__'", "'__TAMANHOS_DO_SITE__'"):
+        if modelo.count(marcador) != 1:
+            falhar('ferramentas/service_worker.js sem o marcador %s' % marcador)
+    versao, n = versao_do_site(dest)
+    tamanhos = json.dumps(tamanhos_do_site(dest), sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+    open(caminho, 'w', encoding='utf-8').write(modelo.replace("'__VERSAO_DO_SITE__'", "'%s'" % versao)
+                                               .replace("'__TAMANHOS_DO_SITE__'", tamanhos))
+    print('service worker: cache-first, cache editor-possari-%s (resumo de %d arquivos do editor; tamanhos de %d pastas)'
+          % (versao, n, len(json.loads(tamanhos))))
+
+
 # ---------------------------------------------------------------- conferencia do build
 def sha256_arquivo(caminho):
     h = hashlib.sha256()
@@ -533,8 +638,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--origem', help='clone do fernfei/OnlyofficePersonal no commit %s (branch %s)' % (COMMIT, VERSAO))
     ap.add_argument('--destino', default=SITE)
+    ap.add_argument('--so-service-worker', action='store_true',
+                    help='so refaz o service worker num site ja montado (depois de mudar ferramentas/service_worker.js)')
     args = ap.parse_args()
     dest = os.path.abspath(args.destino)
+    if args.so_service_worker:
+        trocar_service_worker(dest, refazer=True)
+        return
     tmp = None
     origem = args.origem
     if not origem:
@@ -578,7 +688,9 @@ def main():
     corrigir_mensagens(dest)
     guardar_fontes_do_conversor(dest)
     traduzir_estilos(dest)
+    tirar_pedidos_404(dest)
     aplicar_csp(dest)
+    trocar_service_worker(dest)   # por ultimo: o nome do cache resume os arquivos ja corrigidos
     n = sum(len(f) for _r, _d, f in os.walk(os.path.join(dest, V.split('/')[0])))
     print('pronto: %s (%d arquivos do build)' % (dest, n))
 
